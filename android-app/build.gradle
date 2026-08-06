@@ -1,0 +1,16 @@
+plugins {
+    id 'com.android.application'
+}
+
+android {
+    namespace 'me.gear66.heimdallusb'
+    compileSdk 36
+
+    defaultConfig {
+        applicationId 'me.gear66.heimdallusb'
+        minSdk 26
+        targetSdk 36
+        versionCode 1
+        versionName '0.1.0'
+    }
+}
