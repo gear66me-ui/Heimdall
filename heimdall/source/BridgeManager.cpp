@@ -243,6 +243,9 @@ int BridgeManager::FindDeviceInterface(void)
 			{
 				Interface::Print("\ninterface[%d].altsetting[%d]: num endpoints = %d\n",
 					i, j, configDescriptor->usb_interface[i].altsetting[j].bNumEndpoints);
+				Interface::Print("   Descriptor interface number: %d, alternate setting: %d\n",
+					configDescriptor->usb_interface[i].altsetting[j].bInterfaceNumber,
+					configDescriptor->usb_interface[i].altsetting[j].bAlternateSetting);
 				Interface::Print("   Class.SubClass.Protocol: %02X.%02X.%02X\n",
 					configDescriptor->usb_interface[i].altsetting[j].bInterfaceClass,
 					configDescriptor->usb_interface[i].altsetting[j].bInterfaceSubClass,
@@ -275,8 +278,8 @@ int BridgeManager::FindDeviceInterface(void)
 				&& inEndpointAddress != -1
 				&& outEndpointAddress != -1)
 			{
-				interfaceIndex = i;
-				altSettingIndex = j;
+				interfaceIndex = configDescriptor->usb_interface[i].altsetting[j].bInterfaceNumber;
+				altSettingIndex = configDescriptor->usb_interface[i].altsetting[j].bAlternateSetting;
 				inEndpoint = inEndpointAddress;
 				outEndpoint = outEndpointAddress;
 			}
