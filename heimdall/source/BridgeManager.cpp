@@ -19,7 +19,11 @@
  THE SOFTWARE.*/
 
 // C Standard Library
+#include <cerrno>
+#include <climits>
+#include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 
 // libusb
 #include <libusb.h>
@@ -75,45 +79,108 @@ enum
 	kFileTransferSequenceTimeoutDefault = 30000 // 30 seconds
 };
 
+static bool GetTermuxUsbFd(int& fd)
+{
+	const char *fdEnvironment = getenv("TERMUX_USB_FD");
+
+	if (!fdEnvironment || !*fdEnvironment)
+		return (false);
+
+	errno = 0;
+	char *end = nullptr;
+	long parsedFd = strtol(fdEnvironment, &end, 10);
+
+	if (errno != 0 || end == fdEnvironment || *end != '\0' || parsedFd < 0 || parsedFd > INT_MAX)
+	{
+		Interface::PrintError("Invalid TERMUX_USB_FD value: %s\n", fdEnvironment);
+		fd = -1;
+		return (true);
+	}
+
+	fd = static_cast<int>(parsedFd);
+	return (true);
+}
+
+static int InitialiseTermuxUsbDevice(libusb_context **context, libusb_device_handle **handle, int fd)
+{
+	libusb_init_option option;
+	option.option = LIBUSB_OPTION_NO_DEVICE_DISCOVERY;
+	option.value.ival = 1;
+
+	int result = libusb_init_context(context, &option, 1);
+	if (result != LIBUSB_SUCCESS)
+	{
+		Interface::PrintError("Failed to initialise libusb for TERMUX_USB_FD. libusb error: %d\n", result);
+		return (result);
+	}
+
+	result = libusb_wrap_sys_device(*context, static_cast<intptr_t>(fd), handle);
+	if (result != LIBUSB_SUCCESS)
+	{
+		Interface::PrintError("Failed to wrap TERMUX_USB_FD %d. libusb error: %d\n", fd, result);
+		return (result);
+	}
+
+	Interface::Print("Using TERMUX_USB_FD %d\n", fd);
+	return (LIBUSB_SUCCESS);
+}
+
 int BridgeManager::FindDeviceInterface(void)
 {
 	Interface::Print("Detecting device...\n");
 
-	struct libusb_device **devices;
-	int deviceCount = libusb_get_device_list(libusbContext, &devices);
+	int result = LIBUSB_SUCCESS;
 
-	for (int deviceIndex = 0; deviceIndex < deviceCount; deviceIndex++)
+	if (deviceHandle)
 	{
-		libusb_device_descriptor descriptor;
-		libusb_get_device_descriptor(devices[deviceIndex], &descriptor);
+		heimdallDevice = libusb_get_device(deviceHandle);
 
-		for (int i = 0; i < BridgeManager::kSupportedDeviceCount; i++)
+		if (!heimdallDevice)
 		{
-			if (descriptor.idVendor == supportedDevices[i].vendorId && descriptor.idProduct == supportedDevices[i].productId)
-			{
-				heimdallDevice = devices[deviceIndex];
-				libusb_ref_device(heimdallDevice);
-				break;
-			}
+			Interface::PrintError("Failed to retrieve wrapped USB device\n");
+			return (BridgeManager::kInitialiseFailed);
 		}
 
-		if (heimdallDevice)
-			break;
+		libusb_ref_device(heimdallDevice);
 	}
-
-	libusb_free_device_list(devices, deviceCount);
-
-	if (!heimdallDevice)
+	else
 	{
-		Interface::PrintDeviceDetectionFailed();
-		return (BridgeManager::kInitialiseDeviceNotDetected);
-	}
+		struct libusb_device **devices;
+		int deviceCount = libusb_get_device_list(libusbContext, &devices);
 
-	int result = libusb_open(heimdallDevice, &deviceHandle);
-	if (result != LIBUSB_SUCCESS)
-	{
-		Interface::PrintError("Failed to access device. libusb error: %d\n", result);
-		return (BridgeManager::kInitialiseFailed);
+		for (int deviceIndex = 0; deviceIndex < deviceCount; deviceIndex++)
+		{
+			libusb_device_descriptor descriptor;
+			libusb_get_device_descriptor(devices[deviceIndex], &descriptor);
+
+			for (int i = 0; i < BridgeManager::kSupportedDeviceCount; i++)
+			{
+				if (descriptor.idVendor == supportedDevices[i].vendorId && descriptor.idProduct == supportedDevices[i].productId)
+				{
+					heimdallDevice = devices[deviceIndex];
+					libusb_ref_device(heimdallDevice);
+					break;
+				}
+			}
+
+			if (heimdallDevice)
+				break;
+		}
+
+		libusb_free_device_list(devices, deviceCount);
+
+		if (!heimdallDevice)
+		{
+			Interface::PrintDeviceDetectionFailed();
+			return (BridgeManager::kInitialiseDeviceNotDetected);
+		}
+
+		result = libusb_open(heimdallDevice, &deviceHandle);
+		if (result != LIBUSB_SUCCESS)
+		{
+			Interface::PrintError("Failed to access device. libusb error: %d\n", result);
+			return (BridgeManager::kInitialiseFailed);
+		}
 	}
 
 	libusb_device_descriptor deviceDescriptor;
@@ -231,11 +298,45 @@ bool BridgeManager::ClaimDeviceInterface(void)
 {
 	Interface::Print("Claiming interface...\n");
 
+	int termuxUsbFd = -1;
+	bool useTermuxUsbFd = GetTermuxUsbFd(termuxUsbFd) && termuxUsbFd >= 0;
+
+	if (useTermuxUsbFd)
+	{
+		int configuration = -1;
+		int configurationResult = libusb_get_configuration(deviceHandle, &configuration);
+
+		if (configurationResult != LIBUSB_SUCCESS)
+		{
+			Interface::PrintError("Failed to read TERMUX_USB_FD configuration. libusb error: %d\n", configurationResult);
+			return (false);
+		}
+
+		Interface::Print("TERMUX_USB_FD configuration: %d\n", configuration);
+
+		if (configuration == 0)
+		{
+			configurationResult = libusb_set_configuration(deviceHandle, 1);
+			Interface::Print("TERMUX_USB_FD set configuration 1 result: %d\n", configurationResult);
+
+			if (configurationResult != LIBUSB_SUCCESS)
+			{
+				Interface::PrintError("Failed to set TERMUX_USB_FD configuration 1. libusb error: %d\n", configurationResult);
+				return (false);
+			}
+		}
+
+		Interface::Print("TERMUX_USB_FD interface number: %d\n", interfaceIndex);
+	}
+
 	int result = libusb_claim_interface(deviceHandle, interfaceIndex);
+
+	if (useTermuxUsbFd)
+		Interface::Print("TERMUX_USB_FD claim result: %d\n", result);
 
 #ifdef OS_LINUX
 
-	if (result != LIBUSB_SUCCESS)
+	if (!useTermuxUsbFd && result != LIBUSB_SUCCESS)
 	{
 		detachedDriver = true;
 		Interface::Print("Attempt failed. Detaching driver...\n");
@@ -248,7 +349,7 @@ bool BridgeManager::ClaimDeviceInterface(void)
 
 	if (result != LIBUSB_SUCCESS)
 	{
-		Interface::PrintError("Claiming interface failed!\n");
+		Interface::PrintError("Claiming interface failed! libusb error: %d\n", result);
 		return (false);
 	}
 
@@ -386,6 +487,39 @@ BridgeManager::~BridgeManager()
 
 bool BridgeManager::DetectDevice(void)
 {
+	int termuxUsbFd = -1;
+	if (GetTermuxUsbFd(termuxUsbFd))
+	{
+		if (termuxUsbFd < 0)
+			return (false);
+
+		int result = InitialiseTermuxUsbDevice(&libusbContext, &deviceHandle, termuxUsbFd);
+		if (result != LIBUSB_SUCCESS)
+			return (false);
+
+		libusb_device *device = libusb_get_device(deviceHandle);
+		libusb_device_descriptor descriptor;
+		result = device ? libusb_get_device_descriptor(device, &descriptor) : LIBUSB_ERROR_NO_DEVICE;
+
+		if (result != LIBUSB_SUCCESS)
+		{
+			Interface::PrintError("Failed to read wrapped USB device descriptor. libusb error: %d\n", result);
+			return (false);
+		}
+
+		for (int i = 0; i < BridgeManager::kSupportedDeviceCount; i++)
+		{
+			if (descriptor.idVendor == supportedDevices[i].vendorId && descriptor.idProduct == supportedDevices[i].productId)
+			{
+				Interface::Print("Device detected through TERMUX_USB_FD\n");
+				return (true);
+			}
+		}
+
+		Interface::PrintDeviceDetectionFailed();
+		return (false);
+	}
+
 	// Initialise libusb
 	int result = libusb_init(&libusbContext);
 
@@ -450,8 +584,22 @@ int BridgeManager::Initialise(bool resume)
 {
 	Interface::Print("Initialising connection...\n");
 
-	// Initialise libusb
-	int result = libusb_init(&libusbContext);
+	int termuxUsbFd = -1;
+	bool useTermuxUsbFd = GetTermuxUsbFd(termuxUsbFd);
+	int result;
+
+	if (useTermuxUsbFd)
+	{
+		if (termuxUsbFd < 0)
+			return (BridgeManager::kInitialiseFailed);
+
+		result = InitialiseTermuxUsbDevice(&libusbContext, &deviceHandle, termuxUsbFd);
+	}
+	else
+	{
+		// Preserve the standard desktop Linux path.
+		result = libusb_init(&libusbContext);
+	}
 
 	if (result != LIBUSB_SUCCESS)
 	{
