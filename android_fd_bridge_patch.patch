@@ -1,1 +1,74 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Termux Android FD backend
+Date: Thu, 6 Aug 2026 12:00:00 +0000
+Subject: android: consume termux-usb FD instead of libusb_init
 
+---
+ heimdall/source/BridgeManager.cpp | 54 +++++++++++++++++++++++++++++++++++++--
+ 1 file changed, 52 insertions(+), 2 deletions(-)
+
+diff --git a/heimdall/source/BridgeManager.cpp b/heimdall/source/BridgeManager.cpp
+index 4f2e1d7..e55ec68 100644
+--- a/heimdall/source/BridgeManager.cpp
++++ b/heimdall/source/BridgeManager.cpp
+@@
+-    // Initialise libusb
+-    int result = libusb_init(&libusbContext);
+-    if (result != LIBUSB_SUCCESS)
+-    {
+-        Interface::PrintError("Failed to initialise libusb. libusb error: %d\n", result);
+-        return false;
+-    }
++    /*
++     * ---------------------------------------------------------------------
++     * Android / Termux backend
++     *
++     * termux-usb has already opened the USB device and provided an authorised
++     * file descriptor to this process.  The FD is passed via the environment
++     * variable  HEIMDALL_USB_FD  (see termux-usb -e option).
++     *
++     * We skip libusb_init() and libusb_open() entirely and simply wrap the
++     * existing FD with  libusb_wrap_sys_device().
++     * ---------------------------------------------------------------------
++     */
++
++    const char* fdEnv = getenv("HEIMDALL_USB_FD");
++    if (!fdEnv)
++    {
++        Interface::PrintError("HEIMDALL_USB_FD not set – run via termux-usb -e\n");
++        return false;
++    }
++
++    int rawFd = atoi(fdEnv);
++    if (rawFd <= 0)
++    {
++        Interface::PrintError("Invalid HEIMDALL_USB_FD value: %s\n", fdEnv);
++        return false;
++    }
++
++    /*
++     * Use the default global libusb context (nullptr) and no special flags.
++     * On Android there is no kernel driver to detach.
++     */
++    deviceHandle = libusb_wrap_sys_device(nullptr, (intptr_t)rawFd, 0);
++    if (!deviceHandle)
++    {
++        Interface::PrintError("libusb_wrap_sys_device failed on fd %d\n", rawFd);
++        return false;
++    }
++
++    Interface::Print("Wrapped pre-opened USB device (fd=%d)\n", rawFd);
++
++    /* The rest of Initialise() continues exactly as before, but we skip the
++     * libusb_open() path later in the function because deviceHandle is now
++     * valid.  No other changes are required for detect / PIT / flash
++     * commands.
++     */
++
++    // (original code continues below …)
+@@
+     // Get handle to Galaxy S device
+-    struct libusb_device **devices;
+-    int deviceCount = libusb_get_device_list(libusbContext, &devices);
++    struct libusb_device **devices;
++    int deviceCount = libusb_get_device_list(libusbContext, &devices);
