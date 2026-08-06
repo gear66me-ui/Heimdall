@@ -1,0 +1,42 @@
+name: Build Android USB Probe
+
+on:
+  push:
+    branches: [android-fd]
+    paths:
+      - 'android-usb-probe/**'
+      - '.github/workflows/build-android-usb-probe.yml'
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: android-actions/setup-android@v3
+
+      - name: Install Android SDK
+        run: yes | sdkmanager 'platforms;android-36' 'build-tools;36.0.0'
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.13'
+
+      - name: Build debug APK
+        working-directory: android-usb-probe
+        run: gradle --no-daemon assembleDebug
+
+      - name: Rename APK
+        run: cp android-usb-probe/app/build/outputs/apk/debug/app-debug.apk Heimdall-USB-Probe-v0.1.0.apk
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Heimdall-USB-Probe-v0.1.0
+          path: Heimdall-USB-Probe-v0.1.0.apk
+          if-no-files-found: error
