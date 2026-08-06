@@ -1,5 +1,6 @@
 name: Build Android APK
 
+# Triggered from master after the Android Gradle project was added.
 on:
   workflow_dispatch:
   push:
