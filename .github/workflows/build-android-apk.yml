@@ -1,0 +1,43 @@
+name: Build Android APK
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-apk:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out Android branch
+        uses: actions/checkout@v4
+        with:
+          ref: android-fd
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Verify Android project
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ ! -f gradlew ]]; then
+            echo "ERROR: gradlew is missing on branch android-fd."
+            echo "The Android app project must be committed before an APK can be built."
+            exit 1
+          fi
+          chmod +x gradlew
+
+      - name: Build debug APK
+        run: ./gradlew assembleDebug
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: heimdall-android-debug-apk
+          path: '**/build/outputs/apk/debug/*.apk'
+          if-no-files-found: error
