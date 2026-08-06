@@ -1,6 +1,7 @@
 name: Build Android APK
 
 # Triggered from master after the Android Gradle project was added.
+# 2026-08-06: connector-triggered run to verify GitHub-hosted runner scheduling.
 on:
   workflow_dispatch:
   push:
